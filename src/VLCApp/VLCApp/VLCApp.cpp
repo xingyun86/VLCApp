@@ -10,10 +10,22 @@ typedef SSIZE_T ssize_t;
 #include <vlc/vlc.h>
 #include <time.h>
 
+#include <regex>
+#include <deque>
+#include <mutex>
 #include <vector>
 #include <unordered_map>
+#include <condition_variable>
 #include <curl_helper.h>
-#include <deque>
+#include <iconv_helper.h>
+
+class MediaObject {
+public:
+    MediaObject(uint64_t _time, libvlc_media_t* _media):time(_time),pMedia(_media) {}
+public:
+    uint64_t time;
+    libvlc_media_t* pMedia;
+};
 class AudioVideoMediaPlayer {
 public:
     AudioVideoMediaPlayer() {
@@ -24,9 +36,10 @@ public:
         libvlc_release(m_pInstance);
     }
 private:
+    std::mutex m_lockMutex;
     libvlc_instance_t* m_pInstance = nullptr;
     libvlc_media_t* m_pMedia = nullptr;
-    std::deque<libvlc_media_t*> m_pMediaQueue = {};
+    std::deque<MediaObject> m_pMediaQueue = {};
     std::deque<libvlc_media_t*> m_pMediaQueueHistory = {};
     libvlc_media_player_t* m_pMediaPlayer = nullptr;
 public:
@@ -68,13 +81,14 @@ public:
         // No need to keep the media now
         libvlc_media_release(m_pMedia);
     }
-    void MediaStartPathList(const std::vector<std::string>& pathList)
+    void MediaStartPathList(const std::unordered_map<uint64_t, std::string>& pathList)
     {
+        std::unique_lock<std::mutex> lock(m_lockMutex);
         for (auto it : pathList)
         {
-            m_pMediaQueue.emplace_back(libvlc_media_new_path(m_pInstance, it.c_str()));
-            libvlc_media_parse(m_pMediaQueue.front());
-            std::cout << libvlc_media_get_duration(m_pMediaQueue.front()) << " ms" << std::endl;
+            m_pMediaQueue.emplace_back(MediaObject(it.first, libvlc_media_new_path(m_pInstance, it.second.c_str())));
+            libvlc_media_parse(m_pMediaQueue.front().pMedia);
+            std::cout << libvlc_media_get_duration(m_pMediaQueue.front().pMedia) << " ms" << std::endl;
         }
     }
     void MediaCloseList()
@@ -82,15 +96,14 @@ public:
         for (auto it : m_pMediaQueue)
         { 
             // No need to keep the media now
-            libvlc_media_release(it);
-        }
-        for (auto it : m_pMediaQueueHistory)
-        { 
-            // No need to keep the media now
-            libvlc_media_release(it);
+            libvlc_media_release(it.pMedia);
         }
     }
 public:
+    bool MediaPlayerQueueEmpty() {
+        std::unique_lock<std::mutex> lock(m_lockMutex);
+        return m_pMediaQueue.empty();
+    }
     void MediaPlayerStart()
     {
         // Create a media player playing environement
@@ -100,14 +113,16 @@ public:
     {
         libvlc_media_player_set_media(m_pMediaPlayer, m_pMedia);
     }
+    std::string fileName;
     void MediaPlayerSetMediaQueue()
     {
+        std::unique_lock<std::mutex> lock(m_lockMutex);
         if (!m_pMediaQueue.empty())
         {
             auto playItem = m_pMediaQueue.front();
-            libvlc_media_player_set_media(m_pMediaPlayer, playItem);
-            //m_pMediaQueueHistory.emplace_back(playItem);
-            libvlc_media_release(playItem);
+            libvlc_media_player_set_media(m_pMediaPlayer, playItem.pMedia);
+            libvlc_media_release(playItem.pMedia);
+            fileName = std::to_string(playItem.time);
             m_pMediaQueue.pop_front();
         }
     }
@@ -120,6 +135,7 @@ public:
         window)
     {
 #ifdef  _MSC_VER
+        SetWindowTextA((HWND)window, fileName.c_str());
         libvlc_media_player_set_hwnd
 #else
         libvlc_media_player_set_xwindow
@@ -169,123 +185,151 @@ public:
         libvlc_media_player_release(m_pMediaPlayer);
     }
 };
-#include <regex>
-#include <iconv_helper.h>
-
+class MediaBlock {
+public:
+    MediaBlock(uint64_t _time, const std::string& _name):time(_time),name(_name) {}
+public:
+    uint64_t time;
+    std::string name;
+}; 
+HWND hWnd = NULL;
 static AudioVideoMediaPlayer avmp;
-LRESULT CALLBACK MainProc(HWND hWnd, UINT uMsg, LPARAM lParam, WPARAM wParam)
-{
-    switch (uMsg)
-    {
-    case WM_LBUTTONDOWN:
-        MessageBoxA(hWnd, "您按下了鼠标左键昂", "豆豆的程序", MB_OK);
-        HDC hdc;
-        hdc = GetDC(hWnd);
-        //The GetDC function retrieves a handle to a display device context for the client area of a specified window or for the entire screen. You can use the returned handle in subsequent GDI functions to draw in the device context.
-        TextOutA(hdc, 0, 0, "感谢您对豆豆程序的支持昂", strlen("感谢您对豆豆程序的支持昂"));
-        ReleaseDC(hWnd, hdc);
-        break;
-    case WM_CHAR:
-        char szChar[20];
-        sprintf(szChar, "Char is %d", wParam);
-        MessageBoxA(hWnd, szChar, "豆豆的程序", MB_OK);
-        break;
-    case WM_PAINT:
-        PAINTSTRUCT ps;
-        HDC hDc;
-        hDc = BeginPaint(hWnd, &ps);
-        TextOutA(hDc, 0, 0, "这个是重绘滴哦", strlen("这个是重绘滴哦"));
-        EndPaint(hWnd, &ps);
-        break;
-    case WM_CLOSE:
-        if (IDYES == MessageBoxA(hWnd, "您真要退出么?", "程序", MB_YESNO))
-        {
-            DestroyWindow(hWnd);
-        }
-        break;
-    case WM_DESTROY:
-        PostQuitMessage(0);
-        break;
-    default:
-        return DefWindowProcA(hWnd, uMsg, wParam, lParam);
-    }
-    return 0;
-}
-#include <commctrl.h>
-#pragma comment(lib, "comctl32")
+static std::deque<MediaBlock> mediaQueue;
+std::mutex lockMutex;
+std::condition_variable conditionVariable;
+bool bRunning = true;
+std::string urlPrefix = "http://ivi.bupt.edu.cn/hls/cctv2";
 int main(int argc, char* argv[])
 {
     std::cout << "Hello CMake." << std::endl;
-    /*CHttpTask rootTask;
-    rootTask.GetTaskMap()->insert({ {0,CTaskInfoData(0, "http://ivi.bupt.edu.cn/hls/cctv1.m3u8")} });
-    rootTask.request();
-
-    CHttpTask cacheTask;
-    std::string str = rootTask.GetTaskMap()->begin()->second.response_data;
-    std::smatch sm;
-    std::regex pattern(("-(.*?).ts\n"), std::regex::icase);
-    try
-    {
-        std::map<uint64_t, std::string> playList;
-        for (auto its = str.cbegin(), ite = str.cend(); std::regex_search(its, ite, sm, pattern) == true; its = sm.begin()->second)
+    std::thread producerTask([]() 
         {
-            std::cout << "http://ivi.bupt.edu.cn/hls/" + sm[1].str() << std::endl;
-            playList.emplace(std::stoull(sm[1].str()), "http://ivi.bupt.edu.cn/hls/cctv1-" + sm[1].str()+".ts");
-        }
-        for (auto it = playList.rbegin(); it != playList.rend(); it++)
-        {
-            cacheTask.GetTaskMap()->emplace(it->first, CTaskInfoData(it->first, it->second));
-        }
-        cacheTask.request();
-        for (auto it : *cacheTask.GetTaskMap())
-        {
-            FILE* pFile = fopen(("video/" + std::to_string(it.second.time) + ".ts").c_str(), "wb");
-            if (pFile)
+            while (bRunning)
             {
-                fwrite(it.second.response_data.data(), it.second.response_data.size(), 1, pFile);
-                fclose(pFile);
+                CHttpTask rootTask;
+                rootTask.GetTaskMap()->insert({ {0,CTaskInfoData(0, urlPrefix+".m3u8")} });
+                rootTask.request();
+
+                CHttpTask cacheTask;
+                std::smatch sm = {};
+                std::regex re(("-(.*?).ts\n"), std::regex::icase);
+                std::string str = rootTask.GetTaskMap()->begin()->second.response_data;
+                try
+                {
+                    std::unordered_map<uint64_t, std::string> playList;
+                    for (auto its = str.cbegin(), ite = str.cend(); std::regex_search(its, ite, sm, re) == true; its = sm.begin()->second)
+                    {
+                        std::cout << urlPrefix + "-" + sm[1].str() + ".ts" << std::endl;
+                        playList.emplace(std::stoull(sm[1].str()), urlPrefix + "-" + sm[1].str() + ".ts");
+                    }
+                    for (auto it = playList.begin(); it != playList.end(); it++)
+                    {
+                        cacheTask.GetTaskMap()->emplace(it->first, CTaskInfoData(it->first, it->second));
+                    }
+                    cacheTask.request();
+                    for (auto it : *cacheTask.GetTaskMap())
+                    {
+                        auto fname = ("video/" + std::to_string(it.second.time) + ".ts");
+                        if (access(fname.c_str(), 0) == (-1) && it.second.response_data.find("<html>") == std::string::npos)
+                        {
+                            std::unique_lock<std::mutex> lock(lockMutex);
+                            std::cout << "producer" << std::endl;
+                            FILE* pFile = fopen(fname.c_str(), "wb");
+                            if (pFile)
+                            {
+                                fwrite(it.second.response_data.data(), it.second.response_data.size(), sizeof(char), pFile);
+                                fclose(pFile);
+                                mediaQueue.emplace_back(MediaBlock(it.second.time, fname));
+                            }
+                            conditionVariable.notify_all();
+                        }
+                    }
+                }
+                catch (const std::exception& e)
+                {
+                    std::cout << e.what() << std::endl;
+                }
+                std::cout << time(nullptr) << "000" << std::endl;
+                std::this_thread::sleep_for(std::chrono::milliseconds(16));
+            }            
+        }
+    );
+    std::thread consumerTask([]()
+        {
+            while (bRunning)
+            {
+                std::unique_lock<std::mutex> lock(lockMutex);
+                std::cout << "consumer" << std::endl;
+                conditionVariable.wait(lock, [] { return !mediaQueue.empty(); });
+                std::unordered_map<uint64_t, std::string> vList;
+                for (auto it : mediaQueue)
+                {
+                    vList.emplace(mediaQueue.front().time, mediaQueue.front().name);
+                }
+                mediaQueue.clear();
+                avmp.MediaStartPathList(vList);
+                conditionVariable.notify_all();
             }
         }
-    }
-    catch (const std::exception&e)
-    {
-        std::cout << e.what() << std::endl;
-    }
-    std::cout << time(nullptr) << "000" << std::endl;
-    return 0;*/
-
-    InitCommonControls();
-    WNDCLASSEX wcex = {};
+    );
+    WNDCLASSEX wcex = { 0 };
     wcex.cbSize = sizeof(WNDCLASSEX);
-    wcex.lpfnWndProc = (WNDPROC)MainProc;
+    wcex.lpfnWndProc = (WNDPROC)[](HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)->LRESULT
+    {
+        switch (uMsg)
+        {
+        /*case WM_LBUTTONDOWN:
+            MessageBoxA(hWnd, "您按下了鼠标左键昂", "豆豆的程序", MB_OK);
+            HDC hdc;
+            hdc = GetDC(hWnd);
+            //The GetDC function retrieves a handle to a display device context for the client area of a specified window or for the entire screen. You can use the returned handle in subsequent GDI functions to draw in the device context.
+            TextOutA(hdc, 0, 0, "感谢您对豆豆程序的支持昂", strlen("感谢您对豆豆程序的支持昂"));
+            ReleaseDC(hWnd, hdc);
+            break;
+        case WM_CHAR:
+            char szChar[20];
+            sprintf(szChar, "Char is %d", wParam);
+            MessageBoxA(hWnd, szChar, "豆豆的程序", MB_OK);
+            break;
+        case WM_PAINT:
+            PAINTSTRUCT ps;
+            HDC hDc;
+            hDc = BeginPaint(hWnd, &ps);
+            TextOutA(hDc, 0, 0, "这个是重绘滴哦", strlen("这个是重绘滴哦"));
+            EndPaint(hWnd, &ps);
+            break;
+        case WM_CLOSE:
+            if (IDYES == MessageBoxA(hWnd, "您真要退出么?", "程序", MB_YESNO))
+            {
+                DestroyWindow(hWnd);
+            }
+            break;*/
+        case WM_DESTROY:
+            PostQuitMessage(0);
+            break;
+        default:
+            return DefWindowProcA(hWnd, uMsg, wParam, lParam);
+        }
+        return 0;
+    };
     wcex.style = CS_HREDRAW | CS_VREDRAW;// redraw if size changes 
     wcex.cbClsExtra = 0;                // no extra class memory 
     wcex.cbWndExtra = 0;                // no extra window memory
-    wcex.hIcon = LoadIcon(NULL, IDI_APPLICATION);
-    wcex.hCursor = LoadCursor(NULL, IDC_ARROW);
+    wcex.hIcon = LoadIconA(NULL, IDI_APPLICATION);
+    wcex.hCursor = LoadCursorA(NULL, IDC_ARROW);
     wcex.hbrBackground = (HBRUSH)GetStockObject(WHITE_BRUSH);
     wcex.hInstance = GetModuleHandleA(NULL);
     wcex.lpszClassName = "VIDEO_CLASS";
+
     if (RegisterClassExA(&wcex)) 
     {
         MSG msg = { 0 };
-        HWND hWnd = NULL;// CreateWindowExA(0, wcex.lpszClassName, wcex.lpszClassName, WS_OVERLAPPEDWINDOW, 0, 0, 800, 600, NULL, NULL, wcex.hInstance, NULL);
-       hWnd = CreateWindowA(
-            "MainWClass",        // name of window class 
-            "Sample",            // title-bar string 
-            WS_OVERLAPPEDWINDOW, // top-level window 
-            CW_USEDEFAULT,       // default horizontal position 
-            CW_USEDEFAULT,       // default vertical position 
-            CW_USEDEFAULT,       // default width 
-            CW_USEDEFAULT,       // default height 
-            (HWND)NULL,         // no owner window 
-            (HMENU)NULL,        // use class menu 
-           wcex.hInstance,           // handle to application instance 
-            (LPVOID)NULL);      // no window-creation data 
+        hWnd = CreateWindowExA(0, wcex.lpszClassName, wcex.lpszClassName, WS_OVERLAPPEDWINDOW, 0, 0, 800, 600, NULL, NULL, wcex.hInstance, NULL);
         ShowWindow(hWnd, SW_SHOWNORMAL);
         UpdateWindow(hWnd);
-        //avmp.MediaStartPath("1608882114000.ts");
-        //avmp.MediaStartPathList({ "video/1608882114000.ts","video/1608882124000.ts","video/1608882134000.ts","video/1608882144000.ts","video/1608882154000.ts", });
+        
+        avmp.MediaPlayerStart();
+
         /*avmp.MediaAddOptions({
             ":no-audio",
             ":video-title-position=2",
@@ -294,12 +338,8 @@ int main(int argc, char* argv[])
             ":sout-mux-caching=500",
             ":sout-ts-dts-delay=500"
             });*/
-        //avmp.MediaPlayerStart();
-        //avmp.MediaPlayerSetMediaQueue();
-        //avmp.MediaPlayerPlay();
-        //avmp.MediaPlayerWaitPlaying();
-        //avmp.MediaPlayerSetWindow(hWnd);
-        while (TRUE)
+
+        while (bRunning)
         {
             if (PeekMessageA(&msg, NULL, 0, 0, PM_REMOVE))
             {
@@ -312,20 +352,32 @@ int main(int argc, char* argv[])
             }
             else
             {
-                /*int playState = avmp.MediaPlayerState();
-                std::cout << playState << std::endl;
+                int playState = avmp.MediaPlayerState();
                 if (playState == libvlc_NothingSpecial || playState == libvlc_Ended)
                 {
-                    avmp.MediaPlayerSetMediaQueue();
-                    avmp.MediaPlayerPlay();
-                    avmp.MediaPlayerWaitPlaying();
-                    avmp.MediaPlayerSetWindow(hWnd);
-                }*/
+                    if (!avmp.MediaPlayerQueueEmpty())
+                    {
+                        //std::unique_lock<std::mutex> lock(lockMutex);
+                        avmp.MediaPlayerSetMediaQueue();
+                        avmp.MediaPlayerPlay();
+                        avmp.MediaPlayerWaitPlaying();
+                        avmp.MediaPlayerSetWindow(hWnd);
+                        //conditionVariable.notify_all();
+                    }
+                }
                 std::this_thread::sleep_for(std::chrono::milliseconds(10));
             }
         }
     }
-    
+    bRunning = false;
+    if(producerTask.joinable())
+    {
+        producerTask.join();
+    }
+    if (consumerTask.joinable())
+    {
+        consumerTask.join();
+    }
     avmp.MediaPlayerStop();
     avmp.MediaPlayerClose();
     avmp.MediaClose();
