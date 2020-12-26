@@ -38,5 +38,9 @@ file(GLOB SRCS "*.c" "*.cpp")
 # Add source to this project's executable.
 add_executable (${project_name} ${SRCS})
 
+if(MSVC)
+	target_compile_options(${project_name} PRIVATE "/std:c++latest")
+else(MSVC)
+endif(MSVC)
 target_link_libraries(${project_name} PRIVATE ${EXT_LIB})
 # TODO: Add tests and install targets if needed.

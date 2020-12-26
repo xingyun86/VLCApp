@@ -70,7 +70,7 @@ int main(int argc, char* argv[])
             while (bRunning)
             {
                 std::unique_lock<std::mutex> lock(lockMutex);
-                std::cout << "consumer" << std::endl;
+                //std::cout << "consumer" << std::endl;
                 conditionVariable.wait(lock, [] { return !mediaQueue.empty(); });
                 std::unordered_map<uint64_t, std::string> vList;
                 for (auto it : mediaQueue)
@@ -162,6 +162,20 @@ int main(int argc, char* argv[])
             }
             else
             {
+                std::unordered_map<std::string, std::string> fileList;
+                enum_file(fileList, "video");
+                for (auto it : fileList)
+                {
+                    //std::cout << it.first << "," << it.second << std::endl;
+                    if (it.second.ends_with(".ts"))
+                    {
+                        uint64_t itemTime = std::stoull(it.second.substr(0, it.second.length()-strlen(".ts")));
+                        if (itemTime > 0ULL && avmp.playtime > itemTime)
+                        {
+                            system(("del /s /q " + it.first).c_str());
+                        }
+                    }
+                }
                 int playState = avmp.MediaPlayerState();
                 if (playState == libvlc_NothingSpecial || playState == libvlc_Ended)
                 {

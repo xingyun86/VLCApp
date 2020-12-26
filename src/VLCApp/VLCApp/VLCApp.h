@@ -19,6 +19,7 @@ typedef SSIZE_T ssize_t;
 #include <mutex>
 #include <thread>
 #include <vector>
+#include <filesystem>
 #include <unordered_map>
 #include <condition_variable>
 #include <curl_helper.h>
@@ -118,7 +119,7 @@ public:
     {
         libvlc_media_player_set_media(m_pMediaPlayer, m_pMedia);
     }
-    std::string fileName;
+    uint64_t playtime = 0;
     void MediaPlayerSetMediaQueue()
     {
         std::unique_lock<std::mutex> lock(m_lockMutex);
@@ -127,7 +128,7 @@ public:
             auto playItem = m_pMediaQueue.front();
             libvlc_media_player_set_media(m_pMediaPlayer, playItem.pMedia);
             libvlc_media_release(playItem.pMedia);
-            fileName = std::to_string(playItem.time);
+            playtime = playItem.time;
             m_pMediaQueue.pop_front();
         }
     }
@@ -140,7 +141,7 @@ public:
         window)
     {
 #ifdef  _MSC_VER
-        SetWindowTextA((HWND)window, fileName.c_str());
+        SetWindowTextA((HWND)window, std::to_string(playtime).c_str());
         libvlc_media_player_set_hwnd
 #else
         libvlc_media_player_set_xwindow
@@ -197,3 +198,24 @@ public:
     uint64_t time;
     std::string name;
 };
+
+__inline static
+int enum_file(std::unordered_map<std::string, std::string>& file_list, const std::string& root)
+{
+    std::error_code ec;
+    for (auto& item : std::filesystem::recursive_directory_iterator(root, std::filesystem::directory_options::skip_permission_denied | std::filesystem::directory_options::follow_directory_symlink, ec))
+    {
+        try
+        {
+            if (item.is_regular_file())
+            {
+                file_list.emplace(std::unordered_map<std::string, std::string>::value_type(item.path().string(), item.path().filename().string()));
+            }
+        }
+        catch (const std::exception& e)
+        {
+            std::cout << e.what() << std::endl;
+        }
+    }
+    return 0;
+}
