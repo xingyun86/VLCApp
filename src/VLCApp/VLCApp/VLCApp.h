@@ -4,12 +4,17 @@
 #pragma once
 
 #include <iostream>
+#include <fstream>
+#include <streambuf>
+#define FILE_READER(F, M) std::string((std::istreambuf_iterator<char>(std::ifstream(F, M | std::ios::in).rdbuf())), std::istreambuf_iterator<char>())
+#define FILE_WRITER(D, S, F, M) std::ofstream(F, M | std::ios::out).write((D), (S))
 
 // TODO: Reference additional headers your program requires here.
 #ifdef _MSC_VER
 #include <basetsd.h>
 typedef SSIZE_T ssize_t;
 #include <winsock2.h>
+#include <commctrl.h>
 #endif
 #include <vlc/vlc.h>
 #include <time.h>
@@ -24,6 +29,8 @@ typedef SSIZE_T ssize_t;
 #include <condition_variable>
 #include <curl_helper.h>
 #include <iconv_helper.h>
+
+#include <ppsyqm/json.hpp>
 
 class MediaObject {
 public:
@@ -110,6 +117,15 @@ public:
         std::unique_lock<std::mutex> lock(m_lockMutex);
         return m_pMediaQueue.empty();
     }
+    void MediaPlayerQueueClear() {
+        std::unique_lock<std::mutex> lock(m_lockMutex);
+        for (auto it : m_pMediaQueue)
+        {
+            // No need to keep the media now
+            libvlc_media_release(it.pMedia);
+        }
+        return m_pMediaQueue.clear();
+    }
     void MediaPlayerStart()
     {
         // Create a media player playing environement
@@ -165,7 +181,7 @@ public:
     {
         return libvlc_media_player_get_state(m_pMediaPlayer);
     }
-    void MediaPlayerPause(int no_pause)
+    void MediaPlayerSetPause(int no_pause)
     {
         // set pause the media_player
         libvlc_media_player_set_pause(m_pMediaPlayer, no_pause);

@@ -14,6 +14,7 @@ if(MSVC)
 		${CMAKE_SOURCE_DIR}/vendor/libcurl-7.69.1/include
 		${CMAKE_SOURCE_DIR}/vendor/libiconv-1.16/include
 		${CMAKE_BINARY_DIR}/vendor/libiconv-1.16
+		${CMAKE_SOURCE_DIR}/vendor/json
 	)
 	link_directories(
 		${CMAKE_CURRENT_BINARY_DIR}
@@ -22,7 +23,7 @@ if(MSVC)
 		${CMAKE_BINARY_DIR}/vendor/cares-1.16.0/lib
 		${CMAKE_BINARY_DIR}/vendor/libiconv-1.16
 	)
-	set(EXT_LIB libvlc libvlccore libcurl_static iconv_static)
+	set(EXT_LIB libvlc libvlccore libcurl_static iconv_static comctl32)
 else(MSVC)
 	include_directories(
 		${CMAKE_CURRENT_SOURCE_DIR}
