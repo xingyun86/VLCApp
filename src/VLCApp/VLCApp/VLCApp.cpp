@@ -15,6 +15,8 @@ ppsyqm::json jsonConfig;
 std::unordered_map<std::string, std::string> videoList;
 std::string urlPrefix = "";// "http://ivi.bupt.edu.cn/hls/cctv6hd";
 
+CHttpTask cacheTask;
+
 DWORD dwListBoxStyle = WS_TABSTOP |
 WS_CHILD |
 WS_BORDER |
@@ -63,14 +65,18 @@ int main(int argc, char* argv[])
                     std::this_thread::sleep_for(std::chrono::milliseconds(100));
                     continue;
                 }
-                CHttpTask rootTask;
-                rootTask.GetTaskMap()->insert({ {0,CTaskInfoData(0, urlPrefix+".m3u8")} });
-                rootTask.request();
+                cacheTask.GetTaskMap()->clear();
+                cacheTask.GetTaskMap()->insert({ {0,CTaskInfoData(0, urlPrefix + ".m3u8")} });
+                cacheTask.request();
 
-                CHttpTask cacheTask;
                 std::smatch sm = {};
                 std::regex re(("-(.*?).ts\n"), std::regex::icase);
-                std::string str = rootTask.GetTaskMap()->begin()->second.response_data;
+                std::string str = cacheTask.GetTaskMap()->begin()->second.response_data;
+                if (str.length() <= 0)
+                {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                    continue;
+                }
                 try
                 {
                     std::unordered_map<uint64_t, std::string> playList;
@@ -79,6 +85,7 @@ int main(int argc, char* argv[])
                         //std::cout << urlPrefix + "-" + sm[1].str() + ".ts" << std::endl;
                         playList.emplace(std::stoull(sm[1].str()), urlPrefix + "-" + sm[1].str() + ".ts");
                     }
+                    cacheTask.GetTaskMap()->clear();
                     for (auto it = playList.begin(); it != playList.end(); it++)
                     {
                         cacheTask.GetTaskMap()->emplace(it->first, CTaskInfoData(it->first, it->second));
@@ -90,7 +97,7 @@ int main(int argc, char* argv[])
                         if (access(fname.c_str(), 0) == (-1) && it.second.response_data.find("<html>") == std::string::npos)
                         {
                             std::unique_lock<std::mutex> lock(lockMutex);
-                            //std::cout << "producer" << std::endl;
+                            std::cout << "enter producer" << std::endl;
                             FILE* pFile = fopen(fname.c_str(), "wb");
                             if (pFile)
                             {
@@ -99,6 +106,7 @@ int main(int argc, char* argv[])
                                 mediaQueue.emplace_back(MediaBlock(it.second.time, fname));
                             }
                             conditionVariable.notify_all();
+                            std::cout << "leave producer" << std::endl;
                         }
                     }
                 }
@@ -107,7 +115,7 @@ int main(int argc, char* argv[])
                     std::cout << e.what() << std::endl;
                 }
                 //std::cout << time(nullptr) << "000" << std::endl;
-                std::this_thread::sleep_for(std::chrono::milliseconds(16));
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
             }            
         }
     );
@@ -116,7 +124,7 @@ int main(int argc, char* argv[])
             while (bRunning)
             {
                 std::unique_lock<std::mutex> lock(lockMutex);
-                //std::cout << "consumer" << std::endl;
+                std::cout << "enter consumer" << std::endl;
                 conditionVariable.wait(lock, [] { return !mediaQueue.empty(); });
                 std::unordered_map<uint64_t, std::string> vList;
                 for (auto it : mediaQueue)
@@ -125,6 +133,7 @@ int main(int argc, char* argv[])
                 }
                 mediaQueue.clear();
                 avmp.MediaStartPathList(vList);
+                std::cout << "leave consumer" << std::endl;
             }
         }
     );
@@ -212,6 +221,18 @@ int main(int argc, char* argv[])
             {
                 SendMessageA(hWndListBox, LB_INSERTSTRING, (WPARAM)SendMessageA(hWndListBox, LB_GETCOUNT, (WPARAM)0, (LPARAM)0), (LPARAM)it.first.c_str());
             }
+
+            avmp.MediaPlayerStart();
+
+            /*avmp.MediaAddOptions({
+                ":no-audio",
+                ":video-title-position=2",
+                ":sout-udp-caching=500",
+                ":sout-rtp-caching=500",
+                ":sout-mux-caching=500",
+                ":sout-ts-dts-delay=500"
+                });*/
+
         }
         break;
         case WM_COMMAND:
@@ -227,8 +248,10 @@ int main(int argc, char* argv[])
                     CHAR szText[MAX_PATH] = { 0 };
                     SendMessageA(hWndListBox, LB_GETTEXT, SendMessageA(hWndListBox, LB_GETCURSEL, 0, 0), (LPARAM)szText);
                     urlPrefix = videoList.at(szText);
+                    cacheTask.SetProcessing(0);
                     avmp.MediaPlayerSetPause(0);
                     avmp.MediaPlayerQueueClear();
+                    cacheTask.SetProcessing(1);
                 }
                     break;
                 }
@@ -280,17 +303,6 @@ int main(int argc, char* argv[])
         ShowWindow(hWnd, SW_SHOWNORMAL);
         UpdateWindow(hWnd);
         
-        avmp.MediaPlayerStart();
-
-        /*avmp.MediaAddOptions({
-            ":no-audio",
-            ":video-title-position=2",
-            ":sout-udp-caching=500",
-            ":sout-rtp-caching=500",
-            ":sout-mux-caching=500",
-            ":sout-ts-dts-delay=500"
-            });*/
-
         while (bRunning)
         {
             if (PeekMessageA(&msg, NULL, 0, 0, PM_REMOVE))
